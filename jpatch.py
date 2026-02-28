@@ -74,23 +74,23 @@ def apply_patch(orig_stream, patch_stream, out_stream, verbose=0):
             break
         liInp = byte[0]
 
-        # operator parsing - if we see an escape, the following byte
-        # may change the current operation and/or consume extra length
-        # bytes.  Note that we *do not* skip the remainder of the loop
-        # because the byte that triggered the change may itself be
-        # meaningful when processed under the new operation.
+        # operator parsing follows the same structure as the C++ code: if
+        # the current byte is ESC we consume the next byte and treat it as
+        # the "real" input for this iteration.  That keeps liInp always
+        # equal to the value that should eventually be handled by the
+        # data-switch below (or ignored when lbChg is set).
         if liInp == ESC:
             nxt = patch_stream.read(1)
             if not nxt:
                 break
-            kind = nxt[0]
-            if kind == MOD:
+            liInp = nxt[0]
+            if liInp == MOD:
                 liOpr = MOD
                 lbChg = True
-            elif kind == INS:
+            elif liInp == INS:
                 liOpr = INS
                 lbChg = True
-            elif kind == DEL:
+            elif liInp == DEL:
                 liOpr = DEL
                 lzOff = read_len(patch_stream)
                 if verbose >= 1:
@@ -98,7 +98,7 @@ def apply_patch(orig_stream, patch_stream, out_stream, verbose=0):
                 orig_stream.seek(lzOff + lzMod, 1)
                 lzMod = 0
                 lbChg = True
-            elif kind == EQL:
+            elif liInp == EQL:
                 liOpr = EQL
                 lzOff = read_len(patch_stream)
                 if lzMod > 0:
@@ -113,22 +113,25 @@ def apply_patch(orig_stream, patch_stream, out_stream, verbose=0):
                     out_stream.write(chunk)
                     remaining -= len(chunk)
                 lbChg = True
-            elif kind == BKT:
+            elif liInp == BKT:
                 liOpr = BKT
                 lzOff = read_len(patch_stream)
                 orig_stream.seek(lzMod - lzOff, 1)
                 lzMod = 0
                 lbChg = True
-            elif kind == ESC:
-                # escaped ESC in data, will be handled below
+            elif liInp == ESC:
+                # escaped ESC in data, nothing special to mark
                 if verbose > 2:
                     print("ESC ESC (data)")
             else:
-                # unknown escape, treat as literal after marking
+                # "nominal" data byte preceded by an ESC: record the
+                # escape so that the data-handling code will prefix an
+                # ESC before emitting the byte.
                 lbEsc = True
-            # deliberately no continue: fall through to allow the
-            # byte following the escape to be processed by the
-            # switch below if appropriate.
+            # after this block liInp already holds the byte that should be
+            # processed below (either an operator or actual data).  we
+            # intentionally do *not* continue so that the following switch
+            # sees the correct value.
 
         # data handling when previous sequence is not a change marker
         if lbChg:
